@@ -7,6 +7,12 @@ on:
       - 'payload/**'
       - '.github/workflows/build-android-apk.yml'
       - 'android-app/**'
+  pull_request:
+    paths:
+      - 'payload/**'
+      - '.github/workflows/build-android-apk.yml'
+      - 'android-app/**'
+      - 'ci-trigger.txt'
 
 jobs:
   build-debug-apk:
