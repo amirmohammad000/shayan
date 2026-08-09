@@ -33,11 +33,12 @@ jobs:
           test -f android-app/app/src/main/java/ir/dadban/legalai/MainActivity.kt
           test -f android-app/app/build.gradle.kts
 
-      - name: Use stable Android SDK level
+      - name: Apply build compatibility fixes
         shell: bash
         run: |
           sed -i 's/compileSdk = 37/compileSdk = 36/' android-app/app/build.gradle.kts
           sed -i 's/targetSdk = 37/targetSdk = 36/' android-app/app/build.gradle.kts
+          sed -i '/import androidx.compose.foundation.layout.weight/d' android-app/app/src/main/java/ir/dadban/legalai/MainActivity.kt
           grep -E 'compileSdk|targetSdk' android-app/app/build.gradle.kts
 
       - name: Set up JDK 17
