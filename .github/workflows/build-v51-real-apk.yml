@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'v51payload/**'
+      - 'v51small/**'
       - '.github/workflows/build-v51-real-apk.yml'
       - 'v51-trigger.txt'
 
@@ -22,7 +22,8 @@ jobs:
       - name: Reconstruct uploaded Android project
         shell: bash
         run: |
-          cat v51payload/part*.b64 | base64 --decode > /tmp/dadban-v51.tar.gz
+          cat v51small/part*.b64 | base64 --decode > /tmp/dadban-v51.tar.gz
+          tar -tzf /tmp/dadban-v51.tar.gz >/dev/null
           tar -xzf /tmp/dadban-v51.tar.gz
           test -f android-app/app/src/main/java/ir/dadban/legalai/MainActivity.kt
           test -f android-app/app/build.gradle.kts
