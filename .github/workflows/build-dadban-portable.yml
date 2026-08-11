@@ -1,0 +1,93 @@
+name: Build Dadban Portable Windows
+
+on:
+  pull_request:
+    paths:
+      - 'portable_payload/**'
+      - 'portable_build/**'
+      - '.github/workflows/build-dadban-portable.yml'
+      - 'portable-trigger.txt'
+  workflow_dispatch:
+
+jobs:
+  build-portable:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct Dadban source package
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          $parts = Get-ChildItem portable_payload\part*.b64 | Sort-Object Name
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          [IO.File]::WriteAllBytes("portable_payload.tar.gz", [Convert]::FromBase64String($b64))
+          tar -xzf portable_payload.tar.gz -C package
+          Copy-Item portable_build\portable_server.py package\portable_server.py -Force
+          Copy-Item portable_build\.env.example package\.env.example -Force
+          if (!(Test-Path package\portable_selftest.py)) { throw 'portable_selftest.py missing' }
+          if (!(Test-Path package\RUN_DADBAN.cmd)) { throw 'RUN_DADBAN.cmd missing' }
+
+      - name: Download official Python embeddable runtime
+        shell: powershell
+        run: |
+          $url = 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip'
+          Invoke-WebRequest -Uri $url -OutFile python-embed.zip -UseBasicParsing
+          New-Item -ItemType Directory -Force package\runtime | Out-Null
+          Expand-Archive python-embed.zip -DestinationPath package\runtime -Force
+          $pth = 'package\runtime\python312._pth'
+          if (!(Test-Path $pth)) { throw 'python312._pth missing' }
+          Add-Content -Path $pth -Value '..'
+          Add-Content -Path $pth -Value '../vendor'
+
+      - name: Validate bundled Python runtime
+        shell: powershell
+        run: |
+          package\runtime\python.exe -c "import sqlite3, ssl, urllib.request, http.server, zipfile; print('runtime-ok', sqlite3.sqlite_version)"
+          package\runtime\python.exe -m py_compile package\portable_server.py package\portable_sync_dotic.py package\portable_selftest.py package\app\law_db.py package\app\text_utils.py
+          package\runtime\python.exe package\portable_selftest.py
+
+      - name: Smoke test Dadban HTTP server
+        shell: powershell
+        run: |
+          Copy-Item package\.env.example package\.env -Force
+          $proc = Start-Process -FilePath "$PWD\package\runtime\python.exe" -ArgumentList "$PWD\package\portable_server.py" -WorkingDirectory "$PWD\package" -PassThru
+          try {
+            $ok = $false
+            for ($i=0; $i -lt 20; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/health' -TimeoutSec 2
+                if ($h.ok -eq $true -and $h.portable -eq $true) { $ok = $true; break }
+              } catch {}
+            }
+            if (-not $ok) { throw 'Dadban portable server health check failed' }
+            Write-Host "Dadban health OK; articles=$($h.law_db.articles)"
+          } finally {
+            if ($proc -and !$proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+          Remove-Item package\.env -ErrorAction SilentlyContinue
+
+      - name: Create portable ZIP
+        shell: powershell
+        run: |
+          if (Test-Path Dadban-Portable-v3-Windows.zip) { Remove-Item Dadban-Portable-v3-Windows.zip -Force }
+          Compress-Archive -Path package\* -DestinationPath Dadban-Portable-v3-Windows.zip -CompressionLevel Optimal
+          $hash = (Get-FileHash Dadban-Portable-v3-Windows.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  Dadban-Portable-v3-Windows.zip" | Set-Content Dadban-Portable-v3-Windows.zip.sha256.txt -Encoding ascii
+          Get-Item Dadban-Portable-v3-Windows.zip | Format-List Name,Length
+          Get-Content Dadban-Portable-v3-Windows.zip.sha256.txt
+
+      - name: Upload portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dadban-portable-v3-windows
+          path: |
+            Dadban-Portable-v3-Windows.zip
+            Dadban-Portable-v3-Windows.zip.sha256.txt
+          retention-days: 14
+          if-no-files-found: error
