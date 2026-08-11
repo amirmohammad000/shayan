@@ -1,0 +1,82 @@
+                Button(onClick = vm::explainSelectedLaw, modifier = Modifier.fillMaxWidth()) { Text("به زبان ساده توضیح بده") }
+                state.lawExplanation?.let { e ->
+                    TextSection("یعنی چه؟", e.optString("simple_explanation"))
+                    TextSection("مثال ساده", e.optString("example"))
+                    TextSection("معمولاً کجا کاربرد دارد؟", e.optString("common_uses"))
+                    NoticeCard(e.optString("cautions"))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PremiumScreen(state: UiState, vm: MainViewModel) {
+    val context = LocalContext.current
+    Scaffold(topBar = { SimpleTopBar("پریمیوم", onBack = { vm.go(AppScreen.HOME) }) }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("پریمیوم ماهانه", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("۴۹۰,۰۰۰ تومان", style = MaterialTheme.typography.headlineMedium)
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("✓ ۲۰ تحلیل معمولی در ماه")
+                    Text("✓ ۸ تحلیل عمیق در ماه")
+                    Text("✓ ۳ پیش‌نویس لایحه در ماه")
+                    Text("✓ کتاب قانون و توضیح ساده مواد")
+                    Text("✓ استناد فقط از پایگاه منابع حقوقی تأییدشده")
+                }
+            }
+            if (state.entitlements.isPremium) {
+                QuotaCard(state.entitlements)
+            } else {
+                Button(
+                    onClick = { vm.startCheckout { url -> CustomTabsIntent.Builder().build().launchUrl(context, android.net.Uri.parse(url)) } },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("خرید اشتراک") }
+                OutlinedButton(onClick = vm::checkPayment, modifier = Modifier.fillMaxWidth()) { Text("بررسی وضعیت پرداخت") }
+            }
+            NoticeCard("فعال‌سازی فقط بعد از تأیید سمت سرور انجام می‌شود. در نسخه انتشار، درگاه و پیامک واقعی را در Backend تنظیم کنید.")
+        }
+    }
+}
+
+@Composable
+private fun ResultScreen(state: UiState, vm: MainViewModel) {
+    val top = remember(state.resultJson) { runCatching { JSONObject(state.resultJson ?: "{}") }.getOrDefault(JSONObject()) }
+    val extraction = top.optJSONObject("extraction") ?: JSONObject()
+    val analysis = top.optJSONObject("analysis") ?: JSONObject()
+    val clipboard = LocalClipboardManager.current
+    Scaffold(topBar = { SimpleTopBar("نتیجه", onBack = { vm.go(AppScreen.HOME) }) }) { padding ->
+        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item { TextSection("خلاصه خیلی ساده", analysis.optString("case_summary", extraction.optString("user_story_summary"))) }
+            item { NoticeCard(analysis.optString("urgent_warning").ifBlank { "اگر مهلت اعتراض یا اقدام مطرح است، تاریخ ابلاغ را از اصل سند بررسی کنید." }) }
+            arraySection("سیستم از رأی چه فهمید؟", analysis.optJSONArray("document_findings"))
+            objectArraySection("الان چه کار کنم؟", analysis.optJSONArray("next_steps") ?: analysis.optJSONArray("immediate_actions"))
+            objectArraySection("مهلت‌های احتمالی", analysis.optJSONArray("possible_deadlines") ?: analysis.optJSONArray("deadlines"))
+            objectArraySection("مواد و منابع مرتبط", analysis.optJSONArray("legal_bases"))
+            objectArraySection("دفاع‌های احتمالی", analysis.optJSONArray("defense_theories"))
+            stringArraySection("ریسک‌ها و نکات مخالف", analysis.optJSONArray("risks_and_counterarguments"))
+            analysis.optJSONObject("pleading_draft")?.let { draft ->
+                item {
+                    val text = pleadingText(draft)
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("پیش‌نویس لایحه", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text(text)
+                            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(text)) }) { Text("کپی متن") }
+                        }
+                    }
+                }
+            }
+            item { QuotaCard(state.entitlements) }
+            item { Button(onClick = { vm.go(AppScreen.HOME) }, modifier = Modifier.fillMaxWidth()) { Text("بازگشت به خانه") } }
+        }
+    }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.arraySection(title: String, array: JSONArray?) {
+    if (array == null || array.length() == 0) return
+    item { SectionTitle(title) }
+    items((0 until array.length()).map { array.optString(it) }.filter { it.isNotBlank() }) { Text("• $it") }
+}
+
