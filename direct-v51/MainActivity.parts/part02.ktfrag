@@ -1,0 +1,79 @@
+                Text("${e.freeBasicRemaining} تحلیل رایگان باقی مانده", fontWeight = FontWeight.Bold)
+                Text("هر تحلیل موفقِ رأی یا شرح مشکل، یک اعتبار کم می‌کند.", style = MaterialTheme.typography.bodySmall)
+            } else {
+                Text("حساب پریمیوم فعال", fontWeight = FontWeight.Bold)
+                Text("تحلیل معمولی: ${e.premiumBasicRemaining} | عمیق: ${e.premiumDetailedRemaining} | لایحه: ${e.premiumPleadingRemaining}")
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AnalyzeScreen(state: UiState, vm: MainViewModel) {
+    val context = LocalContext.current
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { vm.setFiles(it) }
+    val title = when (state.analysisMode) { "detailed" -> "تحلیل عمیق"; "pleading" -> "تنظیم لایحه"; else -> "تحلیل ساده" }
+    Scaffold(topBar = { SimpleTopBar(title, onBack = { vm.go(AppScreen.HOME) }) }) { padding ->
+        Column(
+            Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            OutlinedTextField(
+                value = state.description,
+                onValueChange = vm::setDescription,
+                modifier = Modifier.fillMaxWidth().height(160.dp),
+                label = { Text("مشکل را با زبان خودتان بنویسید") },
+                placeholder = { Text("مثلاً: این رأی برای من آمده و نمی‌دانم یعنی چه و باید چه کار کنم...") }
+            )
+            Text("موضوع", fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("کیفری", "حقوقی", "خانواده").forEach { category ->
+                    FilterChip(selected = state.category == category, onClick = { vm.setCategory(category) }, label = { Text(category) })
+                }
+            }
+            OutlinedButton(
+                onClick = { picker.launch(arrayOf("application/pdf", "image/*", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("افزودن رأی، ابلاغیه یا مدرک") }
+            state.selectedFiles.forEach { Text("• ${ApiClient.displayName(context.contentResolver, it)}") }
+            if (state.selectedFiles.isNotEmpty()) TextButton(onClick = { vm.setFiles(emptyList()) }) { Text("حذف فایل‌ها") }
+            NoticeCard(if (state.analysisMode == "basic") "در حساب رایگان فقط بعد از تحلیل موفق یک اعتبار کم می‌شود." else "این خدمت از سهمیه ماهانه پریمیوم شما کم می‌شود.")
+            Button(onClick = vm::analyze, modifier = Modifier.fillMaxWidth()) { Text("تحلیل کن") }
+        }
+    }
+}
+
+@Composable
+private fun LawBookScreen(state: UiState, vm: MainViewModel) {
+    val selected = state.selectedLaw
+    Scaffold(topBar = { SimpleTopBar(if (selected == null) "کتاب قانون" else selected.title, onBack = { if (selected != null) vm.clearSelectedLaw() else vm.go(AppScreen.HOME) }) }) { padding ->
+        if (selected == null) {
+            LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                item {
+                    OutlinedTextField(
+                        value = state.lawQuery,
+                        onValueChange = vm::setLawQuery,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("قانون یا موضوع را جست‌وجو کنید") },
+                        placeholder = { Text("مثلاً ماده ۶۷۴، خیانت در امانت، مهلت تجدیدنظر") },
+                        singleLine = true
+                    )
+                }
+                item { Button(onClick = vm::searchLaws, modifier = Modifier.fillMaxWidth()) { Text("جست‌وجو") } }
+                items(state.lawResults) { item ->
+                    Card(onClick = { vm.selectLaw(item) }, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(item.title, fontWeight = FontWeight.Bold)
+                            Text(item.article)
+                            Text(item.text.take(220) + if (item.text.length > 220) "…" else "", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        } else {
+            Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(selected.article, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("متن رسمی", fontWeight = FontWeight.Bold)
+                Card(Modifier.fillMaxWidth()) { Text(selected.text, Modifier.padding(16.dp)) }
+                Text("مرجع: ${selected.authority}", style = MaterialTheme.typography.bodySmall)
