@@ -1,23 +1,18 @@
-name: Build Android APK
+name: Build Dadban Portable Windows
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - 'payload/**'
-      - '.github/workflows/build-android-apk.yml'
-      - 'android-app/**'
   pull_request:
     paths:
-      - 'payload/**'
+      - 'portable_payload/**'
+      - 'portable_build/**'
       - '.github/workflows/build-android-apk.yml'
-      - 'android-app/**'
       - 'ci-trigger.txt'
 
 jobs:
-  build-debug-apk:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  build-portable:
+    runs-on: windows-latest
+    timeout-minutes: 20
     permissions:
       contents: read
 
@@ -25,51 +20,74 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Reconstruct Android project
-        shell: bash
+      - name: Reconstruct Dadban source package
+        shell: powershell
         run: |
-          cat payload/part*.b64 | base64 --decode > /tmp/android_payload.tar.gz
-          tar -xzf /tmp/android_payload.tar.gz
-          test -f android-app/app/src/main/java/ir/dadban/legalai/MainActivity.kt
-          test -f android-app/app/build.gradle.kts
+          New-Item -ItemType Directory -Force package | Out-Null
+          $parts = Get-ChildItem portable_payload\part*.b64 | Sort-Object Name
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          [IO.File]::WriteAllBytes("portable_payload.tar.gz", [Convert]::FromBase64String($b64))
+          tar -xzf portable_payload.tar.gz -C package
+          Copy-Item portable_build\portable_server.py package\portable_server.py -Force
+          Copy-Item portable_build\.env.example package\.env.example -Force
+          if (!(Test-Path package\portable_selftest.py)) { throw 'portable_selftest.py missing' }
+          if (!(Test-Path package\RUN_DADBAN.cmd)) { throw 'RUN_DADBAN.cmd missing' }
 
-      - name: Apply build compatibility fixes
-        shell: bash
+      - name: Download official Python embeddable runtime
+        shell: powershell
         run: |
-          sed -i 's/compileSdk = 37/compileSdk = 36/' android-app/app/build.gradle.kts
-          sed -i 's/targetSdk = 37/targetSdk = 36/' android-app/app/build.gradle.kts
-          sed -i '/import androidx.compose.foundation.layout.weight/d' android-app/app/src/main/java/ir/dadban/legalai/MainActivity.kt
-          grep -E 'compileSdk|targetSdk' android-app/app/build.gradle.kts
+          $url = 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip'
+          Invoke-WebRequest -Uri $url -OutFile python-embed.zip -UseBasicParsing
+          New-Item -ItemType Directory -Force package\runtime | Out-Null
+          Expand-Archive python-embed.zip -DestinationPath package\runtime -Force
+          $pth = 'package\runtime\python312._pth'
+          if (!(Test-Path $pth)) { throw 'python312._pth missing' }
+          Add-Content -Path $pth -Value '..'
+          Add-Content -Path $pth -Value '../vendor'
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+      - name: Validate bundled Python runtime
+        shell: powershell
+        run: |
+          package\runtime\python.exe -c "import sqlite3, ssl, urllib.request, http.server, zipfile; print('runtime-ok', sqlite3.sqlite_version)"
+          package\runtime\python.exe -m py_compile package\portable_server.py package\portable_sync_dotic.py package\portable_selftest.py package\app\law_db.py package\app\text_utils.py
+          package\runtime\python.exe package\portable_selftest.py
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Smoke test Dadban HTTP server
+        shell: powershell
+        run: |
+          Copy-Item package\.env.example package\.env -Force
+          $proc = Start-Process -FilePath "$PWD\package\runtime\python.exe" -ArgumentList "$PWD\package\portable_server.py" -WorkingDirectory "$PWD\package" -PassThru
+          try {
+            $ok = $false
+            for ($i=0; $i -lt 20; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/health' -TimeoutSec 2
+                if ($h.ok -eq $true -and $h.portable -eq $true) { $ok = $true; break }
+              } catch {}
+            }
+            if (-not $ok) { throw 'Dadban portable server health check failed' }
+            Write-Host "Dadban health OK; articles=$($h.law_db.articles)"
+          } finally {
+            if ($proc -and !$proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+          Remove-Item package\.env -ErrorAction SilentlyContinue
 
-      - name: Install Android 16 SDK
-        shell: bash
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Create portable ZIP
+        shell: powershell
+        run: |
+          Compress-Archive -Path package\* -DestinationPath Dadban-Portable-v3-Windows.zip -CompressionLevel Optimal
+          $hash = (Get-FileHash Dadban-Portable-v3-Windows.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  Dadban-Portable-v3-Windows.zip" | Set-Content Dadban-Portable-v3-Windows.zip.sha256.txt -Encoding ascii
+          Get-Item Dadban-Portable-v3-Windows.zip | Format-List Name,Length
+          Get-Content Dadban-Portable-v3-Windows.zip.sha256.txt
 
-      - name: Set up Gradle 9.5.0
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.5.0'
-
-      - name: Build debug APK
-        working-directory: android-app
-        run: gradle :app:assembleDebug --stacktrace
-
-      - name: Verify APK exists
-        run: test -f android-app/app/build/outputs/apk/debug/app-debug.apk
-
-      - name: Upload APK
+      - name: Upload portable package
         uses: actions/upload-artifact@v4
         with:
-          name: dadban-debug-apk
-          path: android-app/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+          name: dadban-portable-v3-windows
+          path: |
+            Dadban-Portable-v3-Windows.zip
+            Dadban-Portable-v3-Windows.zip.sha256.txt
           retention-days: 14
+          if-no-files-found: error
