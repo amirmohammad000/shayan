@@ -1,0 +1,72 @@
+name: Build Dadban v5.1 Real APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'v51payload/**'
+      - '.github/workflows/build-v51-real-apk.yml'
+      - 'v51-trigger.txt'
+
+jobs:
+  build-v51-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct uploaded Android project
+        shell: bash
+        run: |
+          cat v51payload/part*.b64 | base64 --decode > /tmp/dadban-v51.tar.gz
+          tar -xzf /tmp/dadban-v51.tar.gz
+          test -f android-app/app/src/main/java/ir/dadban/legalai/MainActivity.kt
+          test -f android-app/app/build.gradle.kts
+
+      - name: Apply build compatibility fixes
+        shell: bash
+        run: |
+          sed -i 's/compileSdk = 37/compileSdk = 36/' android-app/app/build.gradle.kts
+          sed -i 's/targetSdk = 37/targetSdk = 36/' android-app/app/build.gradle.kts
+          sed -i '/import androidx.compose.foundation.layout.weight/d' android-app/app/src/main/java/ir/dadban/legalai/MainActivity.kt
+          grep -E 'compileSdk|targetSdk|versionName|versionCode' android-app/app/build.gradle.kts
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        shell: bash
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Set up Gradle 9.5.0
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+
+      - name: Build debug APK
+        working-directory: android-app
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Verify APK
+        run: |
+          test -f android-app/app/build/outputs/apk/debug/app-debug.apk
+          unzip -t android-app/app/build/outputs/apk/debug/app-debug.apk >/dev/null
+          ls -lh android-app/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dadban-v5.1-no-otp-debug-apk
+          path: android-app/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
