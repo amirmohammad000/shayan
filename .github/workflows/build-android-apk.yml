@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'portable_payload/**'
+      - 'portable_payload2/**'
       - 'portable_build/**'
       - '.github/workflows/build-android-apk.yml'
       - 'ci-trigger.txt'
@@ -24,9 +24,11 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
-          $parts = Get-ChildItem portable_payload\part*.b64 | Sort-Object Name
+          $parts = Get-ChildItem portable_payload2\part*.b64 | Sort-Object Name
+          if ($parts.Count -ne 7) { throw "Expected 7 payload parts, found $($parts.Count)" }
           $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
           [IO.File]::WriteAllBytes("portable_payload.tar.gz", [Convert]::FromBase64String($b64))
+          tar -tzf portable_payload.tar.gz | Select-Object -First 10
           tar -xzf portable_payload.tar.gz -C package
           Copy-Item portable_build\portable_server.py package\portable_server.py -Force
           Copy-Item portable_build\.env.example package\.env.example -Force
