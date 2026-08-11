@@ -1,0 +1,77 @@
+private fun androidx.compose.foundation.lazy.LazyListScope.stringArraySection(title: String, array: JSONArray?) = arraySection(title, array)
+
+private fun androidx.compose.foundation.lazy.LazyListScope.objectArraySection(title: String, array: JSONArray?) {
+    if (array == null || array.length() == 0) return
+    item { SectionTitle(title) }
+    items((0 until array.length()).mapNotNull { array.optJSONObject(it) }) { obj ->
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                obj.keys().forEach { key ->
+                    val value = obj.opt(key)
+                    if (value != null && value != JSONObject.NULL && value.toString().isNotBlank()) {
+                        Text("${labelFor(key)}: ${jsonValueText(value)}")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SimpleTopBar(title: String, onBack: (() -> Unit)? = null) {
+    TopAppBar(
+        title = { Text(title) },
+        navigationIcon = { if (onBack != null) TextButton(onClick = onBack) { Text("بازگشت") } }
+    )
+}
+
+@Composable
+private fun SectionTitle(title: String) = Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+
+@Composable
+private fun TextSection(title: String, body: String) {
+    if (body.isBlank()) return
+    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) { SectionTitle(title); Spacer(Modifier.height(6.dp)); Text(body) } }
+}
+
+@Composable
+private fun NoticeCard(text: String) {
+    if (text.isBlank()) return
+    Card(Modifier.fillMaxWidth()) { Text(text, Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium) }
+}
+
+private fun labelFor(key: String): String = mapOf(
+    "action" to "اقدام", "why" to "چرا", "when" to "زمان", "who" to "مسئول",
+    "title" to "عنوان", "date_or_trigger" to "تاریخ یا شروع مهلت", "consequence" to "نتیجه",
+    "source" to "منبع", "verification_status" to "وضعیت تأیید", "proposition" to "مبنای حقوقی",
+    "article_or_section" to "ماده/بخش", "exact_support" to "متن رسمی مرتبط", "caution" to "توضیح احتیاطی",
+    "factual_basis" to "مبنای واقعی", "weaknesses" to "نقاط ضعف", "evidence_needed" to "مدارک لازم"
+)[key] ?: key.replace('_', ' ')
+
+private fun jsonValueText(value: Any?): String = when (value) {
+    is JSONArray -> (0 until value.length()).joinToString("؛ ") { jsonValueText(value.opt(it)) }
+    is JSONObject -> value.keys().asSequence().joinToString(" | ") { "${labelFor(it)}: ${jsonValueText(value.opt(it))}" }
+    null, JSONObject.NULL -> ""
+    else -> value.toString()
+}
+
+private fun pleadingText(draft: JSONObject): String {
+    val out = StringBuilder()
+    listOf("title", "addressed_to", "case_reference", "subject", "introduction").forEach { key ->
+        draft.optString(key).takeIf { it.isNotBlank() }?.let { out.append(labelFor(key)).append(": ").append(it).append("\n\n") }
+    }
+    listOf("factual_background", "procedural_objections", "substantive_defenses", "evidence_and_exhibits", "requests_to_court").forEach { key ->
+        val array = draft.optJSONArray(key) ?: return@forEach
+        if (array.length() > 0) {
+            out.append(labelFor(key)).append(":\n")
+            for (i in 0 until array.length()) out.append("- ").append(array.optString(i)).append('\n')
+            out.append('\n')
+        }
+    }
+    draft.optString("closing").takeIf { it.isNotBlank() }?.let { out.append(it).append("\n\n") }
+    draft.optString("signature_block").takeIf { it.isNotBlank() }?.let { out.append(it) }
+    return out.toString().trim()
+}
+
+private fun formatEpoch(epoch: Long): String = SimpleDateFormat("yyyy/MM/dd", Locale("fa")).format(Date(epoch * 1000))
