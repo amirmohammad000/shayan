@@ -33,6 +33,34 @@ jobs:
           test -f android-app/app/src/main/java/ir/dadban/legalai/MainActivity.kt
           test -f android-app/app/build.gradle.kts
 
+      - name: Apply direct-menu mode
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('android-app/app/src/main/java/ir/dadban/legalai')
+          vm = root / 'MainViewModel.kt'
+          s = vm.read_text()
+          old = '''    init {\n        if (tokenStore.load() != null) refreshAccount() else state = state.copy(screen = AppScreen.AUTH)\n    }\n'''
+          new = '''    init {\n        tokenStore.clear()\n        state = state.copy(\n            screen = AppScreen.HOME,\n            profile = UserProfile(fullName = "", completed = true),\n            entitlements = Entitlements(freeBasicRemaining = 3),\n            message = null\n        )\n    }\n'''
+          if old not in s:
+              raise SystemExit('Expected startup auth block not found')
+          s = s.replace(old, new)
+          s = s.replace('        state = UiState(screen = AppScreen.AUTH)\n', '        state = UiState(screen = AppScreen.HOME, profile = UserProfile(completed = true), entitlements = Entitlements(freeBasicRemaining = 3))\n')
+          s = s.replace('                    state = UiState(screen = AppScreen.AUTH, message = "نشست شما منقضی شده است؛ دوباره وارد شوید.")\n', '                    state = UiState(screen = AppScreen.HOME, profile = UserProfile(completed = true), entitlements = Entitlements(freeBasicRemaining = 3), message = "این نسخه بدون ورود اجرا می‌شود.")\n')
+          vm.write_text(s)
+
+          models = root / 'Models.kt'
+          s = models.read_text().replace('val screen: AppScreen = AppScreen.AUTH,', 'val screen: AppScreen = AppScreen.HOME,')
+          models.write_text(s)
+
+          main = root / 'MainActivity.kt'
+          s = main.read_text()
+          s = s.replace('            item { TextButton(onClick = vm::logout, modifier = Modifier.fillMaxWidth()) { Text("خروج از حساب") } }\n', '')
+          main.write_text(s)
+          PY
+          grep -n "screen = AppScreen.HOME" android-app/app/src/main/java/ir/dadban/legalai/MainViewModel.kt | head
+
       - name: Apply build compatibility fixes
         shell: bash
         run: |
@@ -69,7 +97,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dadban-debug-apk
+          name: dadban-v52-direct-menu-apk
           path: android-app/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
